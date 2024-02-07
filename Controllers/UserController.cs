@@ -1,11 +1,14 @@
-﻿using AgendaApi.Models;
-using ConversorBackEnd.Models.Dtos;
-using ConversorBackEnd.Models;
+﻿using ConversorDeMonedasBack.Data.Interfaces;
+using ConversorDeMonedasBack.Entities;
+using ConversorDeMonedasBack.Models.Dtos;
+using ConversorDeMonedasBack.Models.Enum;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.JsonPatch;
 using Microsoft.AspNetCore.Mvc;
-using static ConversorBackEnd.services.interfaces.IUserServices;
+using System.Security.Claims;
 
-namespace AgendaApi.Controllers
+namespace ConversorDeMonedasBack.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
@@ -13,54 +16,74 @@ namespace AgendaApi.Controllers
     public class UserController : ControllerBase
     {
         private readonly IUserService _userService;
-        public UserController(IUserService userRepository)
+        public UserController(IUserService userService)
         {
-            _userService = userRepository;
+            _userService = userService;
         }
 
         [HttpGet]
-        public ActionResult<UserDto> GetAll()
+        public IActionResult GetAllUsers()
         {
-            //No lo estamos verificando, pero por lo general un GetAll de todos los users lo debería poder hacer solo un usuario con rol ADMIN
-            return Ok(_userService.GetAll());
+            string role = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value;
+            if (role == UserRoleEnum.Admin.ToString())
+            {
+                return Ok(_userService.GetAllUsers());
+            }
+             return Forbid();
         }
 
-        [HttpGet("{id}")]
-        public IActionResult GetOneById(int id)
+        [HttpGet("{userId}")]
+        public IActionResult GetUserById(int userId)
         {
-            if (id == 0)
+            if (userId == 0)
             {
-                return BadRequest("El ID ingresado debe ser distinto de 0");
+                return BadRequest();
             }
 
-            GetUserByIdDto? user = _userService.GetById(id);
-
+            User? user = _userService.GetUserById(userId);
+            
             if (user is null)
             {
                 return NotFound();
             }
 
-            return Ok(user);
+            //var dto = new GetUserByIdResponse()
+            //{
+            //    Id = user.Id,
+            //    Username = user.Username,
+            //    Email = user.Email,
+            //    LastName = user.LastName,
+            //    FirstName = user.FirstName,
+            //    SubscriptionId = user.SubscriptionId,
+            //    Conversions = user.Conversions,
+            //    Role = user.Role
+            //};
 
+            return Ok(user);
         }
 
         [HttpPost]
-        [AllowAnonymous] //Esto lo agregamos porque en nuestro caso el create user lo vamos a usar para el registro (queremos saltear la autenticación)
-        public IActionResult CreateUser(CreateAndUpdateUserDto dto)
+        [AllowAnonymous]
+        public IActionResult CreateUser(CreateUserDto dto)
         {
             try
             {
-                _userService.Create(dto);
+                _userService.CreateUser(dto);
             }
             catch (Exception ex)
             {
-                return BadRequest(ex);
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(ModelState);
+                }
             }
+            
             return Created("Created", dto);
+
         }
 
         [HttpPut("{userId}")]
-        public IActionResult UpdateUser(CreateAndUpdateUserDto dto, int userId)
+        public IActionResult UpdateUser(UpdateUserDto dto, int userId)
         {
             if (!_userService.CheckIfUserExists(userId))
             {
@@ -68,7 +91,7 @@ namespace AgendaApi.Controllers
             }
             try
             {
-                _userService.Update(dto, userId);
+                _userService.UpdateUser(dto, userId);
             }
             catch (Exception ex)
             {
@@ -77,20 +100,40 @@ namespace AgendaApi.Controllers
             return NoContent();
         }
 
-        [HttpDelete]
-        public IActionResult DeleteUser(int id)
+        [HttpDelete("{userId}")]
+        public IActionResult DeleteUser(int userId)
         {
-            try
+            string role = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value;
+            
+            if (role == "Admin")
             {
-                _userService.RemoveUser(id);
-            }
-            catch (Exception ex)
-            {
-                BadRequest(ex);
-            }
+                User? user = _userService.GetUserById(userId);
 
-            return NoContent();
+                if (user is null)
+                {
+                    return BadRequest("El cliente que intenta eliminar no existe");
+                }
+                if (user.FirstName != "Admin")
+                {
+                    _userService.DeleteUser(userId);
+                }
+                return NoContent();
+            }
+            return Forbid();
+
         }
+
+        [HttpPatch("{userId}")]
+        public IActionResult UpdateUserSubscription(int userId, [FromBody] int subscriptionId)
+        {
+            if (subscriptionId == null)
+            {
+                return BadRequest();
+            }
+            _userService.UpdateUserSubscription(userId, subscriptionId);
+            return NoContent();
+        }   
+        
     }
 }
 
